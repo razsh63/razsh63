@@ -1,0 +1,317 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "resources": [
+      {
+        "type": "Microsoft.Network/virtualNetworks",
+        "apiVersion": "2019-04-01",
+        "name": "myVnet",
+        "location": "East US",
+        "properties": {
+          "addressSpace": {
+            "addressPrefixes": [
+              "10.0.0.0/16"
+            ]
+          },
+          "subnets": [
+            {
+              "name": "default",
+              "properties": {
+                "addressPrefix": "10.0.0.0/24",
+                "networkSecurityGroup": null  // Issue: No NSG attached to the default subnet, leaving it unprotected.
+              }
+            },
+            {
+              "name": "web",
+              "properties": {
+                "addressPrefix": "10.0.1.0/24",
+                "networkSecurityGroup": {
+                  "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'webNSG')]"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "Microsoft.Network/networkSecurityGroups",
+        "apiVersion": "2019-04-01",
+        "name": "webNSG",
+        "location": "East US",
+        "properties": {
+          "securityRules": [
+            {
+              "name": "allow_all_web",
+              "properties": {
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "80",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "*",
+                "access": "Allow",
+                "priority": 100,
+                "direction": "Inbound"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "Microsoft.Compute/virtualMachines",
+        "apiVersion": "2019-07-01",
+        "name": "myVM",
+        "location": "East US",
+        "properties": {
+          "hardwareProfile": {
+            "vmSize": "Standard_DS1_v2"
+          },
+          "osProfile": {
+            "computerName": "myVM",
+            "adminUsername": "azureuser",
+            "adminPassword": "P@ssw0rd123"  // Issue: Weak, hard-coded password.
+          },
+          "networkProfile": {
+            "networkInterfaces": [
+              {
+                "id": "[resourceId('Microsoft.Network/networkInterfaces', 'myNIC')]"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "Microsoft.Network/networkInterfaces",
+        "apiVersion": "2019-07-01",
+        "name": "myNIC",
+        "location": "East US",
+        "properties": {
+          "ipConfigurations": [
+            {
+              "name": "ipconfig1",
+              "properties": {
+                "subnet": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVnet', 'web')]"
+                },
+                "privateIPAllocationMethod": "Dynamic",
+                "publicIPAddress": {
+                  "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'myPublicIP')]"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "Microsoft.Network/publicIPAddresses",
+        "apiVersion": "2019-07-01",
+        "name": "myPublicIP",
+        "location": "East US",
+        "properties": {
+          "publicIPAllocationMethod": "Dynamic"  // Issue: Dynamic public IP, making the VM directly accessible from the internet.
+        }
+      },
+      {
+        "type": "Microsoft.Sql/servers",
+        "apiVersion": "2019-06-01-preview",
+        "name": "my-sql-server",
+        "location": "East US",
+        "properties": {
+          "administratorLogin": "adminuser",
+          "administratorLoginPassword": "P@ssw0rd123"  // Issue: Weak, hard-coded password.
+        }
+      },
+      {
+        "type": "Microsoft.Sql/servers/databases/auditingSettings",
+        "apiVersion": "2017-03-01-preview",
+        "name": "my-sql-auditing",
+        "properties": {
+          "state": "Disabled" // Issue: Auditing is disabled for SQL databases, violating CIS recommendations for logging and monitoring.
+        }
+      },
+      {
+        "type": "Microsoft.Storage/storageAccounts",
+        "apiVersion": "2019-06-01",
+        "name": "mystorageaccount",
+        "location": "East US",
+        "sku": {
+          "name": "Standard_LRS"
+        },
+        "kind": "StorageV2",
+        "properties": {
+          "supportsHttpsTrafficOnly": false  // Issue: Allows HTTP traffic, making data vulnerable to interception.
+        }
+      },
+      {
+        "type": "Microsoft.Network/applicationGateways",
+        "apiVersion": "2019-06-01",
+        "name": "myAppGateway",
+        "location": "East US",
+        "properties": {
+          "sku": {
+            "name": "Standard_v2",
+            "tier": "Standard_v2",
+            "capacity": 2
+          },
+          "gatewayIPConfigurations": [
+            {
+              "name": "appGatewayIpConfig",
+              "properties": {
+                "subnet": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVnet', 'default')]"
+                }
+              }
+            }
+          ],
+          "frontendIPConfigurations": [
+            {
+              "name": "appGatewayFrontendIp",
+              "properties": {
+                "publicIPAddress": {
+                  "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'myPublicIP')]"
+                }
+              }
+            }
+          ],
+          "frontendPorts": [
+            {
+              "name": "appGatewayFrontendPort",
+              "properties": {
+                "port": 80  // Issue: Unencrypted HTTP traffic on port 80, making it susceptible to interception.
+              }
+            }
+          ],
+          "backendAddressPools": [
+            {
+              "name": "appGatewayBackendPool",
+              "properties": {
+                "backendAddresses": [
+                  {
+                    "ipAddress": "10.0.0.4"
+                  }
+                ]
+              }
+            }
+          ],
+          "backendHttpSettingsCollection": [
+            {
+              "name": "appGatewayBackendHttpSettings",
+              "properties": {
+                "port": 80,
+                "protocol": "Http",  // Issue: Backend pool uses HTTP, exposing data to potential attacks.
+                "cookieBasedAffinity": "Disabled"
+              }
+            }
+          ],
+          "httpListeners": [
+            {
+              "name": "appGatewayHttpListener",
+              "properties": {
+                "frontendIPConfiguration": {
+                  "id": "[resourceId('Microsoft.Network/applicationGateways/frontendIPConfigurations', 'myAppGateway', 'appGatewayFrontendIp')]"
+                },
+                "frontendPort": {
+                  "id": "[resourceId('Microsoft.Network/applicationGateways/frontendPorts', 'myAppGateway', 'appGatewayFrontendPort')]"
+                },
+                "protocol": "Http"
+              }
+            }
+          ],
+          "urlPathMaps": [
+            {
+              "name": "urlPathMap",
+              "properties": {
+                "defaultBackendAddressPool": {
+                  "id": "[resourceId('Microsoft.Network/applicationGateways/backendAddressPools', 'myAppGateway', 'appGatewayBackendPool')]"
+                },
+                "defaultBackendHttpSettings": {
+                  "id": "[resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', 'myAppGateway', 'appGatewayBackendHttpSettings')]"
+                }
+              }
+            }
+          ],
+          "webApplicationFirewallConfiguration": {
+            "enabled": false  // Issue: WAF is disabled, leaving the gateway vulnerable to common web attacks.
+          }
+        }
+      },
+      {
+        "type": "Microsoft.KeyVault/vaults",
+        "apiVersion": "2019-09-01",
+        "name": "myKeyVault",
+        "location": "East US",
+        "properties": {
+          "sku": {
+            "family": "A",
+            "name": "standard"
+          },
+          "tenantId": "[subscription().tenantId]",
+          "accessPolicies": [
+            {
+              "tenantId": "[subscription().tenantId]",
+              "objectId": "00000000-0000-0000-0000-000000000000",
+              "permissions": {
+                "keys": ["all"],
+                "secrets": ["all"],
+                "certificates": ["all"]
+              }
+            }
+          ],
+          "enabledForDeployment": true,
+          "enabledForTemplateDeployment": true,
+          "enabledForDiskEncryption": true,
+          "softDeleteEnabled": false, // Issue: Soft delete is disabled, violating key vault recovery best practices.
+          "networkAcls": {
+            "bypass": "AzureServices",
+            "defaultAction": "Allow" // Issue: Default action is set to 'Allow', which is not restrictive and increases risk.
+          }
+        }
+      },
+      {
+        "type": "Microsoft.Compute/virtualMachines/extensions",
+        "apiVersion": "2019-07-01",
+        "name": "AntimalwareExtension",
+        "location": "East US",
+        "properties": {
+          "publisher": "Microsoft.Azure.Security",
+          "type": "IaaSAntimalware",
+          "typeHandlerVersion": "1.5",
+          "autoUpgradeMinorVersion": true,
+          "settings": {
+            "AntimalwareEnabled": false, // Issue: Antimalware is disabled, leaving the VM vulnerable to malware.
+            "RealtimeProtectionEnabled": false // Issue: Realtime protection is disabled, reducing protection against active threats.
+          }
+        }
+      },
+      {
+        "type": "Microsoft.Insights/diagnosticSettings",
+        "apiVersion": "2017-05-01-preview",
+        "name": "diagSettings",
+        "dependsOn": [
+          "[resourceId('Microsoft.Compute/virtualMachines', 'myVM')]"
+        ],
+        "properties": {
+          "logs": [
+            {
+              "category": "Administrative",
+              "enabled": false  // Issue: Logging for administrative operations is disabled, reducing auditability.
+            },
+            {
+              "category": "Security",
+              "enabled": false  // Issue: Security logging is disabled, increasing the risk of undetected security breaches.
+            },
+            {
+              "category": "NetworkSecurityGroupRuleCounter",
+              "enabled": false  // Issue: No monitoring of NSG rules, making it hard to detect misconfigurations or attacks.
+            }
+          ],
+          "metrics": [
+            {
+              "category": "AllMetrics",
+              "enabled": false  // Issue: Metrics are disabled, reducing visibility into resource performance and security.
+            }
+          ]
+        }
+      }
+    ]
+  }
+  
